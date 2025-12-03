@@ -13,7 +13,7 @@ pipeline {
                 script {
                     sh "docker rm -f ${CONTAINER_NAME} || true"
                     sh "docker network rm ${NETWORK_NAME} || true"
-                    // Limpiamos archivos viejos si existen
+                    // Borramos reportes antiguos si existen
                     sh "rm -f reporte_bandit.json reporte_zap.html"
                 }
             }
@@ -23,8 +23,7 @@ pipeline {
             steps {
                 script {
                     echo 'Configurando entorno Python local...'
-                    // SOLUCIÓN BANDIT: Creamos un entorno virtual dentro del workspace.
-                    // Así garantizamos que bandit existe y es ejecutable por jenkins.
+                    // Instalamos entorno y bandit
                     sh """
                         python3 -m venv venv
                         . venv/bin/activate
@@ -40,8 +39,8 @@ pipeline {
             steps {
                 script {
                     sh "docker build -t ${IMAGE_NAME} ."
-                    sh "docker network create ${NETWORK_NAME}"
-                    // Recordar: La app ya tiene host='0.0.0.0' gracias a tu corrección anterior
+                    sh "docker network create ${NETWORK_NAME} "
+                    // App escuchando en 0.0.0.0
                     sh "docker run -d --name ${CONTAINER_NAME} --network ${NETWORK_NAME} ${IMAGE_NAME}"
                     sleep 10
                 }
@@ -51,12 +50,10 @@ pipeline {
         stage('Escaneo OWASP ZAP') {
             steps {
                 script {
-                    // SOLUCIÓN ZAP: Truco de permisos.
-                    // 1. Creamos el archivo vacío primero.
-                    sh "touch reporte_zap.html"
-                    // 2. Le damos permisos de escritura a "todo el mundo" (666).
-                    // Esto permite que el usuario dentro del contenedor ZAP pueda escribir en él.
-                    sh "chmod 666 reporte_zap.html"
+                    // CAMBIO CLAVE AQUÍ:
+                    // 1. Damos permiso total (777) a TODA la carpeta actual (pwd)
+                    //    Esto permite que el usuario 'zap' cree archivos donde quiera.
+                    sh "chmod -R 777 ."
                     
                     echo 'Iniciando ataque con OWASP ZAP...'
                     sh """
@@ -67,7 +64,6 @@ pipeline {
                     -r reporte_zap.html \
                     -I || true
                     """
-                    // El flag -I le dice a ZAP que no falle el build por warnings, pero || true asegura el paso.
                 }
             }
         }
@@ -75,13 +71,12 @@ pipeline {
 
     post {
         always {
-            // Ahora sí deberían existir los archivos
+            // Recolectamos la evidencia
             archiveArtifacts artifacts: 'reporte_bandit.json, reporte_zap.html', allowEmptyArchive: true
             
             script {
                 sh "docker rm -f ${CONTAINER_NAME} || true"
                 sh "docker network rm ${NETWORK_NAME} || true"
-                // Opcional: borrar el entorno virtual para ahorrar espacio
                 sh "rm -rf venv"
             }
         }
