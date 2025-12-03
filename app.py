@@ -6,6 +6,13 @@ import hashlib
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+def get_csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = os.urandom(24).hex()
+    return session['csrf_token']
+
+app.jinja_env.globals['csrf_token'] = get_csrf_token
+
 
 def get_db_connection():
     conn = sqlite3.connect('example.db')
@@ -38,23 +45,19 @@ def index():
     ''')
 
 
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-
         conn = get_db_connection()
 
-        # Inyección de SQL solo si se detecta un payload de inyección de SQL
-        if "' OR '" in password:
-            query = "SELECT * FROM users WHERE username = '{}' AND password = '{}'".format(
-                username, password)
-            user = conn.execute(query).fetchone()
-        else:
-            query = "SELECT * FROM users WHERE username = ? AND password = ?"
-            hashed_password = hash_password(password)
-            user = conn.execute(query, (username, hashed_password)).fetchone()
+        query = "SELECT * FROM users WHERE username = ? AND password = ?"
+        hashed_password = hash_password(password)
+
+
+        user = conn.execute(query, (username, hashed_password)).fetchone()
 
         if user:
             session['user_id'] = user['id']
@@ -141,7 +144,8 @@ def dashboard():
         <body>
             <div class="container">
                 <h1 class="mt-5">Welcome, user {{ user_id }}!</h1>
-                <form action="/submit_comment" method="post">
+                <form method="post" action="...">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="form-group">
                         <label for="comment">Comment</label>
                         <textarea class="form-control" id="comment" name="comment" rows="3"></textarea>
@@ -162,6 +166,10 @@ def dashboard():
 
 @app.route('/submit_comment', methods=['POST'])
 def submit_comment():
+    token_formulario = request.form.get('csrf_token')
+    if not token_formulario or token_formulario != session.get('csrf_token'):
+        return "Error de seguridad: Token CSRF inválido", 403
+
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
@@ -199,8 +207,25 @@ def admin():
         </html>
     ''')
 
+@app.after_request
+def add_security_headers(response):
 
-# AHORA (Corrección)
+    csp_policy = (
+        "default-src 'self'; "
+        "style-src 'self' https://maxcdn.bootstrapcdn.com; "
+        "script-src 'self' 'unsafe-inline'; "
+        "object-src 'none';"
+    )
+    response.headers['Content-Security-Policy'] = csp_policy
+
+
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+
+    return response
+
+
+
 if __name__ == '__main__':
-    # host='0.0.0.0' es vital para que Docker funcione
     app.run(host='0.0.0.0', debug=True)
