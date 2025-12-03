@@ -13,7 +13,6 @@ pipeline {
                 script {
                     sh "docker rm -f ${CONTAINER_NAME} || true"
                     sh "docker network rm ${NETWORK_NAME} || true"
-                    // Borramos reportes antiguos si existen
                     sh "rm -f reporte_bandit.json reporte_zap.html"
                 }
             }
@@ -23,7 +22,6 @@ pipeline {
             steps {
                 script {
                     echo 'Configurando entorno Python local...'
-                    // Instalamos entorno y bandit
                     sh """
                         python3 -m venv venv
                         . venv/bin/activate
@@ -39,8 +37,7 @@ pipeline {
             steps {
                 script {
                     sh "docker build -t ${IMAGE_NAME} ."
-                    sh "docker network create ${NETWORK_NAME} "
-                    // App escuchando en 0.0.0.0
+                    sh "docker network create ${NETWORK_NAME}"
                     sh "docker run -d --name ${CONTAINER_NAME} --network ${NETWORK_NAME} ${IMAGE_NAME}"
                     sleep 10
                 }
@@ -50,14 +47,10 @@ pipeline {
         stage('Escaneo OWASP ZAP') {
             steps {
                 script {
-                    // CAMBIO CLAVE AQUÍ:
-                    // 1. Damos permiso total (777) a TODA la carpeta actual (pwd)
-                    //    Esto permite que el usuario 'zap' cree archivos donde quiera.
-                    sh "chmod -R 777 ."
-                    
                     echo 'Iniciando ataque con OWASP ZAP...'
+                    // SOLUCION FINAL: Agregamos "-u 0" para correr como root y evitar AccessDenied
                     sh """
-                    docker run --rm --network ${NETWORK_NAME} \
+                    docker run --rm --network ${NETWORK_NAME} -u 0 \
                     -v \$(pwd):/zap/wrk/:rw \
                     ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                     -t http://${CONTAINER_NAME}:5000 \
@@ -71,9 +64,7 @@ pipeline {
 
     post {
         always {
-            // Recolectamos la evidencia
             archiveArtifacts artifacts: 'reporte_bandit.json, reporte_zap.html', allowEmptyArchive: true
-            
             script {
                 sh "docker rm -f ${CONTAINER_NAME} || true"
                 sh "docker network rm ${NETWORK_NAME} || true"
