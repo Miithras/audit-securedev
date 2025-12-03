@@ -200,5 +200,7 @@ def admin():
     ''')
 
 
+# AHORA (Corrección)
 if __name__ == '__main__':
-    app.run(debug=True)
+    # host='0.0.0.0' es vital para que Docker funcione
+    app.run(host='0.0.0.0', debug=True)
